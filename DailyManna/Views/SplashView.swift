@@ -10,7 +10,7 @@ struct SplashView: View {
             ContentView()
         } else {
             ZStack {
-                Color.white.edgesIgnoringSafeArea(.all)
+                Color(.systemGray6).edgesIgnoringSafeArea(.all)  // 다크모드 배경색
                 
                 VStack {
                     VStack(spacing: 20) {
@@ -19,15 +19,13 @@ struct SplashView: View {
                             .font(.system(size: 80))
                             .foregroundColor(.orange)
                         
-                        // 앱 이름
                         Text("DailyManna")
                             .font(.system(size: 36, weight: .bold))
-                            .foregroundColor(.black.opacity(0.80))
+                            .foregroundColor(.white)  // 텍스트 색상 변경
                         
-                        // 앱 설명
                         Text("Daily bread for your soul")
                             .font(.title3)
-                            .foregroundColor(.black.opacity(0.60))
+                            .foregroundColor(.gray)  // 설명 텍스트 색상 변경
                     }
                     .scaleEffect(size)
                     .opacity(opacity)
@@ -43,15 +41,16 @@ struct SplashView: View {
                         Text("\"Give us this day our daily bread\"")
                             .font(.system(size: 16, weight: .medium))
                             .italic()
-                            .foregroundColor(.black.opacity(0.6))
+                            .foregroundColor(.gray)  // 인용구 색상 변경
                         Text("Matthew 6:11")
                             .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.black.opacity(0.5))
+                            .foregroundColor(.gray)  // 참조 색상 변경
                     }
                     .padding(.top, 50)
                     .opacity(opacity)
                 }
             }
+            .preferredColorScheme(.dark)  // 강제 다크모드 설정
             .onAppear {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                     withAnimation {

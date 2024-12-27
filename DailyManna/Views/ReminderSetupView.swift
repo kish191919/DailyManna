@@ -4,10 +4,14 @@ struct ReminderSetupView: View {
     @ObservedObject var viewModel: QuoteReminderViewModel
     @State private var showCategorySheet = false
     @State private var showTimePicker = false
+    @State private var showSoundPicker = false
+    @State private var showQuoteView = false  // QuoteView 전환을 위한 상태 추가
+    @State private var timePickerAnchor: CGPoint = .zero
+    @State private var soundPickerAnchor: CGPoint = .zero
     @Environment(\.colorScheme) var colorScheme
     
     var backgroundColor: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color.white
+        Color(.systemGray6)  // 항상 다크모드 색상 사용
     }
     
     var buttonBackgroundColor: Color {
@@ -18,6 +22,13 @@ struct ReminderSetupView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "h:mm a"
         return formatter.string(from: viewModel.selectedTime)
+    }
+    
+    var selectedCategoryString: String {
+        if let category = viewModel.selectedCategory {
+            return "\(category.icon) \(category.name)"
+        }
+        return "Select"
     }
     
     var body: some View {
@@ -36,96 +47,111 @@ struct ReminderSetupView: View {
                 .padding(.top, 20)
                 .padding(.bottom, 20)
                 
-                // 카테고리 섹션
-                VStack(alignment: .leading, spacing: 16) {
-                    // 카테고리 선택 버튼
-                    Button(action: {
-                        showCategorySheet = true
-                    }) {
+                VStack(spacing: 20) {
+                    // 카테고리 섹션
+                    VStack(alignment: .leading, spacing: 12) {
                         HStack {
-                            Image(systemName: "folder.fill")
-                                .font(.headline)
                             Text("Categories")
                                 .font(.headline)
+                                .foregroundColor(colorScheme == .dark ? .white : .black)
+                            
                             Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.subheadline)
-                                .foregroundColor(.gray)
-                        }
-                        .padding(16)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(buttonBackgroundColor)
-                        )
-                        .foregroundColor(colorScheme == .dark ? .white : .black)
-                    }
-                    
-                    // 선택된 카테고리 표시
-                    if !viewModel.selectedCategories.isEmpty {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(Array(viewModel.selectedCategories), id: \.self) { category in
-                                    CategoryChip(category: category)
-                                }
+                            
+                            Button(action: {
+                                showCategorySheet = true
+                            }) {
+                                Text(selectedCategoryString)
+                                    .font(.headline)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(buttonBackgroundColor)
+                                    )
+                                    .foregroundColor(colorScheme == .dark ? .white : .black)
                             }
                         }
                     }
-                }
-                .padding(.horizontal)
-                .padding(.bottom, 32)  // 카테고리 섹션 아래 여백 추가
-                
-                // 요일 선택 섹션
-
-                
-                // 시간 선택 섹션
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Text("Time")
-                            .font(.headline)
-                            .foregroundColor(colorScheme == .dark ? .white : .black)
-                        
-                        Spacer()
-                        
-                        Button(action: {
-                            showTimePicker = true
-                        }) {
-                            Text(timeString)
+                    .padding(.horizontal)
+                    
+                    // Sound 섹션
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Sound")
                                 .font(.headline)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 8)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(buttonBackgroundColor)
-                                )
                                 .foregroundColor(colorScheme == .dark ? .white : .black)
+                            
+                            Spacer()
+                            
+                            Button(action: {
+                                showSoundPicker = true
+                            }) {
+                                Text(viewModel.selectedSound.rawValue)
+                                    .font(.headline)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(buttonBackgroundColor)
+                                    )
+                                    .foregroundColor(colorScheme == .dark ? .white : .black)
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                    
+                    // 시간 선택 섹션
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Time")
+                                .font(.headline)
+                                .foregroundColor(colorScheme == .dark ? .white : .black)
+                            
+                            Spacer()
+                            
+                            Button(action: {
+                                showTimePicker = true
+                            }) {
+                                Text(timeString)
+                                    .font(.headline)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(buttonBackgroundColor)
+                                    )
+                                    .foregroundColor(colorScheme == .dark ? .white : .black)
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                    
+                    // 요일 선택 섹션
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 8) {
+                            ForEach(0..<7) { index in
+                                DayButton(
+                                    day: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][index],
+                                    isSelected: viewModel.selectedDays.contains(index)
+                                ) {
+                                    if viewModel.selectedDays.contains(index) {
+                                        viewModel.selectedDays.remove(index)
+                                    } else {
+                                        viewModel.selectedDays.insert(index)
+                                    }
+                                }
+                            }
                         }
                     }
                     .padding(.horizontal)
                 }
-                
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 8) {
-                        ForEach(0..<7) { index in
-                            DayButton(
-                                day: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][index],
-                                isSelected: viewModel.selectedDays.contains(index)
-                            ) {
-                                if viewModel.selectedDays.contains(index) {
-                                    viewModel.selectedDays.remove(index)
-                                } else {
-                                    viewModel.selectedDays.insert(index)
-                                }
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal)
                 
                 Spacer()
                 
                 // 저장 버튼
                 Button(action: {
                     viewModel.scheduleReminders()
+                    showQuoteView = true  // QuoteView로 전환
                 }) {
                     Text("Save")
                         .font(.headline)
@@ -141,12 +167,33 @@ struct ReminderSetupView: View {
                 .padding(.bottom, 20)
             }
         }
-        .background(backgroundColor.ignoresSafeArea())
+        .background(Color(.systemGray6).ignoresSafeArea())
+        .preferredColorScheme(.dark) // 강제로 다크모드 적용
         .sheet(isPresented: $showCategorySheet) {
-            CategorySheetView(selectedCategories: $viewModel.selectedCategories)
+            CategorySheetView(selectedCategory: $viewModel.selectedCategory, viewModel: viewModel)
         }
-        .sheet(isPresented: $showTimePicker) {
-            TimePickerSheet(selectedTime: $viewModel.selectedTime)
+        .popover(isPresented: $showTimePicker, attachmentAnchor: .point(.bottom), arrowEdge: .bottom) {
+            TimePickerView(selectedTime: $viewModel.selectedTime)
         }
+        .popover(isPresented: $showSoundPicker, attachmentAnchor: .point(.bottom), arrowEdge: .bottom) {
+            SoundPickerView(selectedSound: $viewModel.selectedSound)
+        }
+        .fullScreenCover(isPresented: $showQuoteView) {
+            QuoteView(viewModel: viewModel)
+        }
+    }
+}
+
+struct TimeAnchorPreferenceKey: PreferenceKey {
+    static var defaultValue: CGPoint = .zero
+    static func reduce(value: inout CGPoint, nextValue: () -> CGPoint) {
+        value = nextValue()
+    }
+}
+
+struct SoundAnchorPreferenceKey: PreferenceKey {
+    static var defaultValue: CGPoint = .zero
+    static func reduce(value: inout CGPoint, nextValue: () -> CGPoint) {
+        value = nextValue()
     }
 }

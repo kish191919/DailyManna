@@ -1,13 +1,13 @@
 import SwiftUI
 
 struct CategoryChip: View {
-    let category: QuoteCategory
+    let category: SubCategory
     @Environment(\.colorScheme) var colorScheme
     
     var body: some View {
         HStack(spacing: 4) {
             Text(category.icon)
-            Text(category.rawValue)
+            Text(category.name)
                 .font(.subheadline)
         }
         .padding(.horizontal, 12)

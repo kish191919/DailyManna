@@ -1,0 +1,1210 @@
+// ./DailyManna/ViewModels/QuoteReminderViewModel.swift
+
+import SwiftUI
+import UserNotifications
+
+class QuoteReminderViewModel: ObservableObject {
+    @Published var selectedCategory: SubCategory?
+    @Published var selectedDays: Set<Int> = []
+    @Published var selectedTime: Date = Date()
+    @Published var selectedSound: NotificationSound = .systemDefault
+    @Published var currentQuote: Quote?
+    @Published var isReminderSet: Bool = false
+    @Published var isFavorite: Bool = false
+    
+    private var quotes: [Quote] = []
+    private var autoPlayTimer: Timer?
+    
+    init() {
+        loadQuotes()
+        requestNotificationPermission()
+    }
+    
+    private func loadQuotes() {
+        // 실제 앱에서는 데이터베이스나 API에서 로드
+        quotes = [
+            Quote(id: UUID(),
+                 text: "The fear of the Lord is the beginning of knowledge, but fools despise wisdom and instruction.",
+                 reference: "Proverbs 1:7",
+                 subCategory: CategoryData.faithAndChristianLiving.first(where: { $0.name == "Wisdom" }))
+        ]
+        currentQuote = quotes.first
+    }
+    
+    func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { success, error in
+            if let error = error {
+                print("Error: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    func scheduleReminders() {
+        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        
+        for day in selectedDays {
+            let notification = UNMutableNotificationContent()
+            notification.title = "Daily Bible Quote"
+            
+            // 선택된 카테고리에 맞는 구절 선택
+            if let category = selectedCategory {
+                notification.body = quotes.filter { $0.subCategory?.name == category.name }
+                    .randomElement()?.text ?? quotes.randomElement()?.text ?? ""
+            } else {
+                notification.body = quotes.randomElement()?.text ?? ""
+            }
+            
+            notification.sound = UNNotificationSound(named: selectedSound.soundName)
+            
+            var dateComponents = Calendar.current.dateComponents([.hour, .minute], from: selectedTime)
+            dateComponents.weekday = day + 1
+            
+            let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
+            let request = UNNotificationRequest(identifier: UUID().uuidString, content: notification, trigger: trigger)
+            
+            UNUserNotificationCenter.current().add(request)
+        }
+        
+        isReminderSet = true
+    }
+    
+    func toggleFavorite() {
+        isFavorite.toggle()
+    }
+    
+    func startAutoPlay() {
+        autoPlayTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            self?.showNextQuote()
+        }
+    }
+    
+    func stopAutoPlay() {
+        autoPlayTimer?.invalidate()
+        autoPlayTimer = nil
+    }
+    
+    private func showNextQuote() {
+        guard let currentQuote = currentQuote,
+              let currentIndex = quotes.firstIndex(where: { $0.id == currentQuote.id }) else { return }
+        
+        let nextIndex = (currentIndex + 1) % quotes.count
+        self.currentQuote = quotes[nextIndex]
+    }
+}
+
+
+// ./DailyManna/App/DailyMannaApp.swift
+
+
+import SwiftUI
+
+@main
+struct DailyManna: App {
+    var body: some Scene {
+        WindowGroup {
+            SplashView()
+        }
+    }
+}
+
+
+// ./DailyManna/Models/Quote.swift
+
+import SwiftUI
+
+struct Quote: Identifiable, Codable {
+    let id: UUID
+    let text: String
+    let reference: String
+    let subCategory: SubCategory?
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case text
+        case reference
+        case subCategory
+    }
+}
+
+
+
+// ./DailyManna/Models/NotificationSound.swift
+
+import UserNotifications
+import AVFoundation
+
+enum NotificationSound: String, CaseIterable {
+    case coco = "Coco"
+    case drums = "Drums"
+    case coin = "Coin"
+    case sheba = "Sheba"
+    case galaxy = "Galaxy"
+    case domino = "Domino"
+    case correct = "Correct"
+    case gucci = "Gucci"
+    case magicWand = "Magic wand"
+    case noSound = "No sound"
+    case positive = "Positive"
+    case systemDefault = "System default"
+    case piper = "Piper"
+    
+    var soundName: UNNotificationSoundName {
+        if self == .noSound {
+            return UNNotificationSoundName("")
+        } else if self == .systemDefault {
+            return UNNotificationSoundName("DefaultSound")
+        } else {
+            return UNNotificationSoundName(rawValue: "\(self.rawValue).caf")
+        }
+    }
+    
+    var soundFileName: String {
+        if self == .noSound {
+            return ""
+        } else if self == .systemDefault {
+            return "DefaultSound"
+        } else {
+            return self.rawValue
+        }
+    }
+    
+    static func playSound(_ sound: NotificationSound) {
+        guard sound != .noSound else { return }
+        
+        var soundID: SystemSoundID = 0
+        if let soundURL = Bundle.main.url(forResource: sound.soundFileName, withExtension: "caf") {
+            AudioServicesCreateSystemSoundID(soundURL as CFURL, &soundID)
+            AudioServicesPlaySystemSound(soundID)
+        }
+    }
+}
+
+
+// ./DailyManna/Views/DaySelectionView.swift
+
+import SwiftUI
+
+struct DaySelectionView: View {
+    @Binding var selectedDays: Set<Int>
+    private let days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    
+    var body: some View {
+        HStack {
+            ForEach(0..<7) { index in
+                DayButton(
+                    day: days[index],
+                    isSelected: selectedDays.contains(index)
+                ) {
+                    if selectedDays.contains(index) {
+                        selectedDays.remove(index)
+                    } else {
+                        selectedDays.insert(index)
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+// ./DailyManna/Views/TimePickerView.swift
+
+import SwiftUI
+
+struct TimePickerView: View {
+    @Binding var selectedTime: Date
+    @Environment(\.dismiss) var dismiss
+    @Environment(\.colorScheme) var colorScheme
+    @State private var tempSelectedTime: Date
+    
+    init(selectedTime: Binding<Date>) {
+        _selectedTime = selectedTime
+        _tempSelectedTime = State(initialValue: selectedTime.wrappedValue)
+    }
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Time Picker
+            DatePicker("", selection: $tempSelectedTime, displayedComponents: .hourAndMinute)
+                .datePickerStyle(WheelDatePickerStyle())
+                .labelsHidden()
+                .frame(maxWidth: 250, maxHeight: 160)
+                .padding(.top, 16)
+            
+            Spacer()
+                .frame(height: 60)  // 시계와 버튼 사이 간격 증가
+            
+            // Done Button
+            Button(action: {
+                selectedTime = tempSelectedTime
+                dismiss()
+            }) {
+                Text("Done")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .frame(width: 300)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.orange)
+                    )
+            }
+            .padding(.bottom, 16)
+        }
+        .padding(.horizontal, 20)
+        .background(colorScheme == .dark ? Color(.systemGray6) : .white)
+        .cornerRadius(12)
+    }
+}
+
+
+
+// ./DailyManna/Views/QuoteView.swift
+
+
+import  SwiftUI
+
+struct QuoteView: View {
+    @ObservedObject var viewModel: QuoteReminderViewModel
+    @State private var showCategorySheet = false
+    @State private var isPlaying = false
+    @State private var showUpgradeAlert = false
+    @Environment(\.colorScheme) var colorScheme
+    
+    var backgroundColor: Color {
+        colorScheme == .dark ? Color(.systemBackground) : Color(.systemBackground)
+    }
+    
+    var categoryButton: some View {
+        Button(action: {
+            showCategorySheet = true
+        }) {
+            if let category = viewModel.selectedCategory {
+                HStack(spacing: 4) {
+                    Text(category.icon)
+                    Text(category.name)
+                        .font(.system(size: 14, weight: .medium))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(Color.orange.opacity(0.15))
+                )
+            }
+        }
+    }
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Top Bar
+            HStack {
+                categoryButton
+                Spacer()
+                Button(action: {
+                    showUpgradeAlert = true
+                }) {
+                    Image(systemName: "crown.fill")
+                        .font(.system(size: 22))
+                        .foregroundColor(.orange)
+                }
+            }
+            .padding()
+            
+            // Quote Content
+            VStack(spacing: 20) {
+                Text(viewModel.currentQuote?.text ?? "")
+                    .font(.system(size: 24))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                
+                Text(viewModel.currentQuote?.reference ?? "")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.gray)
+            }
+            .frame(maxHeight: .infinity)
+            
+            // Bottom Controls
+            HStack(spacing: 40) {
+                Button(action: shareQuote) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 24))
+                }
+                
+                Button(action: toggleFavorite) {
+                    Image(systemName: viewModel.isFavorite ? "heart.fill" : "heart")
+                        .font(.system(size: 24))
+                        .foregroundColor(.red)
+                }
+                
+                Button(action: toggleAutoPlay) {
+                    Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.system(size: 24))
+                        .foregroundColor(.orange)
+                }
+            }
+            .padding(.bottom, 30)
+        }
+        .background(backgroundColor.ignoresSafeArea())
+        .sheet(isPresented: $showCategorySheet) {
+            CategorySheetView(selectedCategory: $viewModel.selectedCategory)
+        }
+        .alert(isPresented: $showUpgradeAlert) {
+            Alert(
+                title: Text("Upgrade to Premium"),
+                message: Text("Get access to all features and unlimited quotes!"),
+                primaryButton: .default(Text("Upgrade Now")),
+                secondaryButton: .cancel()
+            )
+        }
+    }
+    
+    private func shareQuote() {
+        guard let quote = viewModel.currentQuote else { return }
+        let shareText = "\(quote.text)\n- \(quote.reference)"
+        let av = UIActivityViewController(activityItems: [shareText], applicationActivities: nil)
+        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+           let window = windowScene.windows.first {
+            window.rootViewController?.present(av, animated: true)
+        }
+    }
+    
+    private func toggleFavorite() {
+        viewModel.toggleFavorite()
+    }
+    
+    private func toggleAutoPlay() {
+        isPlaying.toggle()
+        if isPlaying {
+            // Start auto-play timer
+            viewModel.startAutoPlay()
+        } else {
+            // Stop auto-play timer
+            viewModel.stopAutoPlay()
+        }
+    }
+}
+
+
+// ./DailyManna/Views/ReminderSetupView.swift
+
+import SwiftUI
+
+struct ReminderSetupView: View {
+    @ObservedObject var viewModel: QuoteReminderViewModel
+    @State private var showCategorySheet = false
+    @State private var showTimePicker = false
+    @State private var showSoundPicker = false
+    @State private var showQuoteView = false  // QuoteView 전환을 위한 상태 추가
+    @State private var timePickerAnchor: CGPoint = .zero
+    @State private var soundPickerAnchor: CGPoint = .zero
+    @Environment(\.colorScheme) var colorScheme
+    
+    var backgroundColor: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color.white
+    }
+    
+    var buttonBackgroundColor: Color {
+        colorScheme == .dark ? Color(.systemGray5) : Color(.systemGray6)
+    }
+    
+    var timeString: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+        return formatter.string(from: viewModel.selectedTime)
+    }
+    
+    var selectedCategoryString: String {
+        if let category = viewModel.selectedCategory {
+            return "\(category.icon) \(category.name)"
+        }
+        return "Select"
+    }
+    
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                // 상단 아이콘 및 제목
+                HStack(spacing: 8) {
+                    Image(systemName: "bell.fill")
+                        .font(.system(size: 28))
+                        .foregroundColor(.orange)
+                    
+                    Text("Daily Manna")
+                        .font(.system(size: 28, weight: .bold))
+                        .foregroundColor(colorScheme == .dark ? .white : .black)
+                }
+                .padding(.top, 20)
+                .padding(.bottom, 20)
+                
+                VStack(spacing: 20) {
+                    // 카테고리 섹션
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Categories")
+                                .font(.headline)
+                                .foregroundColor(colorScheme == .dark ? .white : .black)
+                            
+                            Spacer()
+                            
+                            Button(action: {
+                                showCategorySheet = true
+                            }) {
+                                Text(selectedCategoryString)
+                                    .font(.headline)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(buttonBackgroundColor)
+                                    )
+                                    .foregroundColor(colorScheme == .dark ? .white : .black)
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                    
+                    // Sound 섹션
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Sound")
+                                .font(.headline)
+                                .foregroundColor(colorScheme == .dark ? .white : .black)
+                            
+                            Spacer()
+                            
+                            Button(action: {
+                                showSoundPicker = true
+                            }) {
+                                Text(viewModel.selectedSound.rawValue)
+                                    .font(.headline)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(buttonBackgroundColor)
+                                    )
+                                    .foregroundColor(colorScheme == .dark ? .white : .black)
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                    
+                    // 시간 선택 섹션
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Time")
+                                .font(.headline)
+                                .foregroundColor(colorScheme == .dark ? .white : .black)
+                            
+                            Spacer()
+                            
+                            Button(action: {
+                                showTimePicker = true
+                            }) {
+                                Text(timeString)
+                                    .font(.headline)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(buttonBackgroundColor)
+                                    )
+                                    .foregroundColor(colorScheme == .dark ? .white : .black)
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                    
+                    // 요일 선택 섹션
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 8) {
+                            ForEach(0..<7) { index in
+                                DayButton(
+                                    day: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][index],
+                                    isSelected: viewModel.selectedDays.contains(index)
+                                ) {
+                                    if viewModel.selectedDays.contains(index) {
+                                        viewModel.selectedDays.remove(index)
+                                    } else {
+                                        viewModel.selectedDays.insert(index)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+                
+                Spacer()
+                
+                // 저장 버튼
+                Button(action: {
+                    viewModel.scheduleReminders()
+                    showQuoteView = true  // QuoteView로 전환
+                }) {
+                    Text("Save")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.orange)
+                        )
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 20)
+            }
+        }
+        .background(backgroundColor.ignoresSafeArea())
+        .sheet(isPresented: $showCategorySheet) {
+            CategorySheetView(selectedCategory: $viewModel.selectedCategory)
+        }
+        .popover(isPresented: $showTimePicker, attachmentAnchor: .point(.bottom), arrowEdge: .bottom) {
+            TimePickerView(selectedTime: $viewModel.selectedTime)
+        }
+        .popover(isPresented: $showSoundPicker, attachmentAnchor: .point(.bottom), arrowEdge: .bottom) {
+            SoundPickerView(selectedSound: $viewModel.selectedSound)
+        }
+        .fullScreenCover(isPresented: $showQuoteView) {
+            QuoteView(viewModel: viewModel)
+        }
+    }
+}
+
+struct TimeAnchorPreferenceKey: PreferenceKey {
+    static var defaultValue: CGPoint = .zero
+    static func reduce(value: inout CGPoint, nextValue: () -> CGPoint) {
+        value = nextValue()
+    }
+}
+
+struct SoundAnchorPreferenceKey: PreferenceKey {
+    static var defaultValue: CGPoint = .zero
+    static func reduce(value: inout CGPoint, nextValue: () -> CGPoint) {
+        value = nextValue()
+    }
+}
+
+
+// ./DailyManna/Views/SoundPickerView.swift
+
+import SwiftUI
+
+struct SoundPickerView: View {
+    @Binding var selectedSound: NotificationSound
+    @Environment(\.dismiss) var dismiss
+    @Environment(\.colorScheme) var colorScheme
+    
+    var body: some View {
+        NavigationView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Choose a sound for notifications")
+                    .font(.title2)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(NotificationSound.allCases, id: \.self) { sound in
+                            Button(action: {
+                                selectedSound = sound
+                                NotificationSound.playSound(sound)
+                            }) {
+                                HStack {
+                                    // Sound icon
+                                    Image(systemName: sound == .noSound ? "speaker.slash" : "speaker.wave.2")
+                                        .foregroundColor(.orange)
+                                        .frame(width: 30)
+                                    
+                                    // Sound name
+                                    Text(sound.rawValue)
+                                        .foregroundColor(colorScheme == .dark ? .white : .black)
+                                    
+                                    Spacer()
+                                    
+                                    // Checkmark for selected sound
+                                    if sound == selectedSound {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundColor(.orange)
+                                    } else {
+                                        Circle()
+                                            .strokeBorder(Color.gray.opacity(0.3), lineWidth: 1)
+                                            .frame(width: 22, height: 22)
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .padding(.vertical, 12)
+                            .padding(.horizontal)
+                            .background(
+                                Rectangle()
+                                    .fill(colorScheme == .dark ? Color(.systemGray6) : .white)
+                            )
+                            
+                            if sound != NotificationSound.allCases.last {
+                                Divider()
+                                    .padding(.leading, 56)
+                            }
+                        }
+                    }
+                    .background(colorScheme == .dark ? Color(.systemGray6) : .white)
+                    .cornerRadius(10)
+                    .padding(.horizontal)
+                }
+                
+                Button(action: {
+                    dismiss()
+                }) {
+                    Text("Done")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.orange)
+                        )
+                }
+                .padding()
+            }
+            .navigationTitle("Sound")
+            .navigationBarTitleDisplayMode(.inline)
+            .background(colorScheme == .dark ? Color.black : Color(.systemGray6))
+        }
+    }
+}
+
+
+// ./DailyManna/Views/SplashView.swift
+
+import SwiftUI
+
+struct SplashView: View {
+    @State private var isActive = false
+    @State private var size = 0.8
+    @State private var opacity = 0.5
+    
+    var body: some View {
+        if isActive {
+            ContentView()
+        } else {
+            ZStack {
+                Color.white.edgesIgnoringSafeArea(.all)
+                
+                VStack {
+                    VStack(spacing: 20) {
+                        // 메인 이미지
+                        Image(systemName: "sun.max.fill")
+                            .font(.system(size: 80))
+                            .foregroundColor(.orange)
+                        
+                        // 앱 이름
+                        Text("DailyManna")
+                            .font(.system(size: 36, weight: .bold))
+                            .foregroundColor(.black.opacity(0.80))
+                        
+                        // 앱 설명
+                        Text("Daily bread for your soul")
+                            .font(.title3)
+                            .foregroundColor(.black.opacity(0.60))
+                    }
+                    .scaleEffect(size)
+                    .opacity(opacity)
+                    .onAppear {
+                        withAnimation(.easeIn(duration: 1.2)) {
+                            self.size = 0.9
+                            self.opacity = 1.0
+                        }
+                    }
+                    
+                    // 성경 구절
+                    VStack {
+                        Text("\"Give us this day our daily bread\"")
+                            .font(.system(size: 16, weight: .medium))
+                            .italic()
+                            .foregroundColor(.black.opacity(0.6))
+                        Text("Matthew 6:11")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.black.opacity(0.5))
+                    }
+                    .padding(.top, 50)
+                    .opacity(opacity)
+                }
+            }
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    withAnimation {
+                        self.isActive = true
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+// ./DailyManna/Views/CategorySheetView.swift
+
+import SwiftUI
+
+import SwiftUI
+
+struct CategorySheetView: View {
+    @Binding var selectedCategory: SubCategory?
+    @Environment(\.dismiss) var dismiss
+    @Environment(\.colorScheme) var colorScheme
+    @State private var selectedMainCategory: MainCategory = .faithAndChristianLiving
+    
+    var backgroundColor: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color.white
+    }
+    
+    // 현재 카테고리의 인덱스
+    private var currentIndex: Int {
+        MainCategory.allCases.firstIndex(of: selectedMainCategory) ?? 0
+    }
+    
+    // 이전 카테고리로 이동 가능 여부
+    private var canMoveToPrevious: Bool {
+        currentIndex > 0
+    }
+    
+    // 다음 카테고리로 이동 가능 여부
+    private var canMoveToNext: Bool {
+        currentIndex < MainCategory.allCases.count - 1
+    }
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 0) {
+                // 네비게이션 바 커스텀
+                HStack {
+                    Spacer()
+                    Text("Select Category")
+                        .font(.system(size: 20, weight: .bold))
+                    Spacer()
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .font(.system(size: 18))
+                    .foregroundColor(.blue)
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 16)
+                
+                // 메인 카테고리 선택 영역
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 16) {
+                        ForEach(MainCategory.allCases, id: \.self) { category in
+                            MainCategoryButton(
+                                title: category.rawValue,
+                                isSelected: selectedMainCategory == category,
+                                action: { selectedMainCategory = category }
+                            )
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+                .padding(.vertical, 16)
+                
+                Divider()
+                    .padding(.bottom, 8)
+                
+                // 서브 카테고리 그리드
+                ScrollView(showsIndicators: false) {
+                    LazyVGrid(columns: [
+                        GridItem(.flexible()),
+                        GridItem(.flexible())
+                    ], spacing: 12) {
+                        ForEach(CategoryData.getSubCategories(for: selectedMainCategory), id: \.id) { subCategory in
+                            Button(action: {
+                                selectedCategory = subCategory
+                                dismiss()
+                            }) {
+                                VStack(spacing: 8) {
+                                    Text(subCategory.icon)
+                                        .font(.system(size: 32))
+                                    
+                                    Text(subCategory.name)
+                                        .font(.system(size: 16, weight: .medium))
+                                        .multilineTextAlignment(.center)
+                                        .foregroundColor(colorScheme == .dark ? .white : .black)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(selectedCategory?.id == subCategory.id ?
+                                             Color.orange.opacity(0.15) :
+                                                (colorScheme == .dark ? Color(.systemGray5) : Color(.systemGray6)))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .stroke(selectedCategory?.id == subCategory.id ?
+                                                       Color.orange : Color.clear,
+                                                       lineWidth: 2)
+                                        )
+                                )
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+                
+                // 화살표 버튼
+                HStack(spacing: 40) {
+                    Button(action: {
+                        if canMoveToPrevious {
+                            withAnimation {
+                                selectedMainCategory = MainCategory.allCases[currentIndex - 1]
+                            }
+                        }
+                    }) {
+                        Image(systemName: "chevron.left.circle.fill")
+                            .font(.system(size: 40))
+                            .foregroundColor(canMoveToPrevious ? .orange : .gray.opacity(0.3))
+                    }
+                    .disabled(!canMoveToPrevious)
+                    
+                    Button(action: {
+                        if canMoveToNext {
+                            withAnimation {
+                                selectedMainCategory = MainCategory.allCases[currentIndex + 1]
+                            }
+                        }
+                    }) {
+                        Image(systemName: "chevron.right.circle.fill")
+                            .font(.system(size: 40))
+                            .foregroundColor(canMoveToNext ? .orange : .gray.opacity(0.3))
+                    }
+                    .disabled(!canMoveToNext)
+                }
+                .padding(.vertical, 20)
+            }
+            .background(backgroundColor.ignoresSafeArea())
+        }
+        .navigationBarHidden(true)
+    }
+}
+
+struct MainCategoryButton: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+    @Environment(\.colorScheme) var colorScheme
+    
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 17, weight: .medium))
+                .lineLimit(1)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(isSelected ? Color.orange : (colorScheme == .dark ? Color(.systemGray5) : Color(.systemGray6)))
+                )
+                .foregroundColor(isSelected ? .white : .primary)
+                .contentShape(Rectangle())
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+
+// ./DailyManna/Views/ContentView.swift
+
+//
+//  ContentView.swift
+//  DailyManna
+//
+//  Created by sunghwan ki on 12/26/24.
+//
+
+import SwiftUI
+
+struct ContentView: View {
+    @StateObject private var viewModel = QuoteReminderViewModel()
+    
+    var body: some View {
+        NavigationView {
+            ReminderSetupView(viewModel: viewModel)
+        }
+    }
+}
+
+
+// ./DailyManna/Views/Components/TimePickerSheet.swift
+
+import SwiftUI
+
+struct TimePickerSheet: View {
+    @Binding var selectedTime: Date
+    @Environment(\.dismiss) var dismiss
+    @Environment(\.colorScheme) var colorScheme
+    
+    var body: some View {
+        NavigationView {
+            VStack {
+                DatePicker("Select Time",
+                          selection: $selectedTime,
+                          displayedComponents: .hourAndMinute)
+                    .datePickerStyle(WheelDatePickerStyle())
+                    .labelsHidden()
+                    .frame(maxHeight: 200)
+                    .padding()
+            }
+            .navigationTitle("Select Time")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+                
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+            }
+            .background(colorScheme == .dark ? Color.black : Color.white)
+        }
+    }
+}
+
+
+// ./DailyManna/Views/Components/DayButton.swift
+
+
+import SwiftUI
+
+struct DayButton: View {
+    let day: String
+    let isSelected: Bool
+    let action: () -> Void
+    @Environment(\.colorScheme) var colorScheme
+    
+    var body: some View {
+        Button(action: action) {
+            Text(day)
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(isSelected ? Color.orange : (colorScheme == .dark ? Color(.systemGray5) : Color(.systemGray6)))
+                )
+                .foregroundColor(isSelected ? .white : (colorScheme == .dark ? .white : .black))
+        }
+    }
+}
+
+
+// ./DailyManna/Views/Components/BibleQuoteCategory.swift
+
+import SwiftUI
+
+// 메인 카테고리
+enum MainCategory: String, CaseIterable {
+    case faithAndChristianLiving = "Pillars of Faith and Christian Living"
+    case personalGrowth = "Personal Growth and Life Balance"
+    case relationships = "Relationships and Community"
+    case practicalLiving = "Practical Living"
+}
+
+// 서브 카테고리
+struct SubCategory: Identifiable, Hashable, Codable {
+    let id = UUID()
+    let name: String
+    let topics: [String]
+    let icon: String
+    
+    // Hashable 구현
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+    
+    static func == (lhs: SubCategory, rhs: SubCategory) -> Bool {
+        lhs.id == rhs.id
+    }
+}
+
+// 카테고리 데이터 구조
+struct CategoryData {
+    static let faithAndChristianLiving: [SubCategory] = [
+        SubCategory(name: "Faith", topics: [
+            "Strengthening Your Faith",
+            "Living by Faith, Not by Sight",
+            "Faith in God's Promises"
+        ], icon: "✝️"),
+        SubCategory(name: "Trust", topics: [
+            "Trusting God's Timing",
+            "Letting Go of Worry",
+            "Confidence in God's Plan"
+        ], icon: "🙏"),
+        SubCategory(name: "Hope", topics: [
+            "Finding Hope in Difficult Times",
+            "God's Promises for the Future",
+            "Hope in Eternal Life"
+        ], icon: "⭐️"),
+        SubCategory(name: "Love", topics: [
+            "God's Unconditional Love",
+            "Loving Your Neighbor",
+            "Forgiving with Love"
+        ], icon: "❤️"),
+        SubCategory(name: "Peace", topics: [
+            "Peace in Times of Anxiety",
+            "God's Gift of Inner Peace",
+            "Living as a Peacemaker"
+        ], icon: "🕊️"),
+        SubCategory(name: "Joy", topics: [
+            "Finding Joy in Trials",
+            "Rejoicing in the Lord",
+            "Sustaining Joy Through Faith"
+        ], icon: "😊"),
+        SubCategory(name: "Wisdom", topics: [
+            "Seeking Godly Wisdom",
+            "Wisdom in Decision-Making",
+            "The Fear of the Lord as Wisdom"
+        ], icon: "📚"),
+        SubCategory(name: "Strength", topics: [
+            "God's Strength in Our Weakness",
+            "Overcoming Challenges with His Power",
+            "Renewing Strength Through Prayer"
+        ], icon: "💪"),
+        SubCategory(name: "Grace", topics: [
+            "Living in God's Grace",
+            "Extending Grace to Others",
+            "The Gift of Salvation by Grace"
+        ], icon: "🌟"),
+        SubCategory(name: "Forgiveness", topics: [
+            "God's Forgiveness of Sins",
+            "Forgiving Those Who Hurt Us",
+            "Freedom Through Forgiveness"
+        ], icon: "🕊️")
+    ]
+    
+    static let personalGrowth: [SubCategory] = [
+        SubCategory(name: "Take Care of Your Health", topics: [
+            "Finding Strength in Physical Weakness",
+            "Trusting God Through Illness",
+            "Caring for Your Body as God's Temple"
+        ], icon: "💪"),
+        SubCategory(name: "Improve Your Mindset", topics: [
+            "Renewing Your Mind with God's Word",
+            "Developing a Positive Attitude",
+            "Replacing Negative Thoughts with Truth"
+        ], icon: "🧠"),
+        SubCategory(name: "Look on the Bright Side", topics: [
+            "Gratitude in Every Situation",
+            "Seeing God's Goodness Around You",
+            "Overcoming Complaints with Thankfulness"
+        ], icon: "☀️"),
+        SubCategory(name: "Stay Mentally Strong", topics: [
+            "Battling Stress and Anxiety Through Prayer",
+            "Standing Firm in the Storms of Life",
+            "Finding Rest in God's Peace"
+        ], icon: "🏋️‍♂️")
+    ]
+    
+    static let relationships: [SubCategory] = [
+        SubCategory(name: "Build Healthy Relationships", topics: [
+            "Strengthening Bonds with Loved Ones",
+            "Resolving Conflicts in Love",
+            "Supporting Each Other in Faith"
+        ], icon: "👥")
+    ]
+    
+    static let practicalLiving: [SubCategory] = [
+        SubCategory(name: "Work-Life Balance", topics: [
+            "Trusting God in Your Career",
+            "Honoring God with Your Time",
+            "Resting in the Sabbath Principle"
+        ], icon: "⚖️"),
+        SubCategory(name: "Financial Wisdom", topics: [
+            "Trusting God as Your Provider",
+            "Stewarding Resources Wisely",
+            "Overcoming Fear of Financial Lack"
+        ], icon: "💰")
+    ]
+    
+    static func getSubCategories(for mainCategory: MainCategory) -> [SubCategory] {
+        switch mainCategory {
+        case .faithAndChristianLiving:
+            return faithAndChristianLiving
+        case .personalGrowth:
+            return personalGrowth
+        case .relationships:
+            return relationships
+        case .practicalLiving:
+            return practicalLiving
+        }
+    }
+}
+
+
+// ./DailyManna/Views/Components/CategoryChip.swift
+
+import SwiftUI
+
+struct CategoryChip: View {
+    let category: SubCategory
+    @Environment(\.colorScheme) var colorScheme
+    
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(category.icon)
+            Text(category.name)
+                .font(.subheadline)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.orange.opacity(colorScheme == .dark ? 0.3 : 0.1))
+        )
+        .foregroundColor(colorScheme == .dark ? .white : .black)
+    }
+}
+
+
+// ./DailyManna/Views/Components/CategoryButton.swift
+
+import SwiftUI
+
+struct CategoryButton: View {
+    let category: SubCategory
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            VStack {
+                Text(category.icon)
+                    .font(.system(size: 30))
+                Text(category.name)
+                    .font(.system(size: 14, weight: .medium))
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(isSelected ? Color.orange.opacity(0.1) : Color.gray.opacity(0.1))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(isSelected ? Color.orange : Color.clear, lineWidth: 2)
+                    )
+            )
+        }
+        .foregroundColor(isSelected ? .orange : .primary)
+    }
+}
+
+

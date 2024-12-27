@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct CategoryButton: View {
-    let category: QuoteCategory
+    let category: SubCategory
     let isSelected: Bool
     let action: () -> Void
     
@@ -10,7 +10,7 @@ struct CategoryButton: View {
             VStack {
                 Text(category.icon)
                     .font(.system(size: 30))
-                Text(category.rawValue)
+                Text(category.name)
                     .font(.system(size: 14, weight: .medium))
                     .multilineTextAlignment(.center)
             }
@@ -25,6 +25,6 @@ struct CategoryButton: View {
                     )
             )
         }
-        .foregroundColor(isSelected ? .orange : .black)
+        .foregroundColor(isSelected ? .orange : .primary)
     }
 }

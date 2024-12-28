@@ -89,17 +89,15 @@ struct QuoteView: View {
                     DragGesture()
                         .onChanged { gesture in
                             let translation = gesture.translation.height
-                            if translation < 0 {
-                                offset = translation
-                                scale = 1.0
-                                opacity = 1.0 - (abs(translation) / 500.0)
-                            }
+                            offset = translation
+                            scale = 1.0
+                            opacity = 1.0 - (abs(translation) / 500.0)
                         }
                         .onEnded { gesture in
                             let translation = gesture.translation.height
                             let generator = UIImpactFeedbackGenerator(style: .medium)
                             
-                            if translation < -50 {
+                            if translation < -50 {  // Swipe up for next quote
                                 if viewModel.settings.hapticEnabled {
                                     generator.impactOccurred()
                                 }
@@ -110,6 +108,26 @@ struct QuoteView: View {
                                 
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                                     viewModel.showNextQuote()
+                                    scale = 0.5
+                                    opacity = 0
+                                    offset = 0
+                                    
+                                    withAnimation(.spring(response: 1.0, dampingFraction: 0.9, blendDuration: 0.5)) {
+                                        scale = 1.0
+                                        opacity = 1
+                                    }
+                                }
+                            } else if translation > 50 {  // Swipe down for previous quote
+                                if viewModel.settings.hapticEnabled {
+                                    generator.impactOccurred()
+                                }
+                                withAnimation(.easeOut(duration: 0.3)) {
+                                    offset = 200
+                                    opacity = 0
+                                }
+                                
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    viewModel.showPreviousQuote()
                                     scale = 0.5
                                     opacity = 0
                                     offset = 0
@@ -144,9 +162,7 @@ struct QuoteView: View {
                     }
                     
                     Button(action: toggleAutoPlay) {
-                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 24))
-                            .foregroundColor(.white)
+                        playButton  // Use the custom playButton view
                     }
                     
                     Button(action: {
@@ -212,64 +228,101 @@ struct QuoteView: View {
     // CircularProgressButton 구현
     private var playButton: some View {
         ZStack {
-            // 프로그레스 배경
+            // Progress background circle
             Circle()
                 .stroke(lineWidth: 2)
                 .opacity(0.3)
                 .foregroundColor(.white)
             
-            // 프로그레스 인디케이터
+            // Progress indicator
             Circle()
                 .trim(from: 0, to: progress)
                 .stroke(style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                 .foregroundColor(.white)
                 .rotationEffect(Angle(degrees: -90))
             
-            // 재생/일시정지 아이콘
+            // Play/Pause icon
             Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                 .font(.system(size: 24))
                 .foregroundColor(.white)
         }
-        .frame(width: 32, height: 32)
+        .frame(width: 32, height: 32)  // Increased size for better visibility
     }
     
+    // toggleAutoPlay 함수를 수정하여 애니메이션을 부드럽게 처리
     private func toggleAutoPlay() {
         isPlaying.toggle()
         if isPlaying {
-            // 타이머 시작
             progress = 0
-            timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-                if progress < 1.0 {
-                    withAnimation {
-                        progress += 0.1 / autoPlayDuration
+            timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { currentTimer in
+                guard currentTimer == self.timer else {
+                    currentTimer.invalidate()
+                    return
+                }
+                
+                if self.progress < 1.0 {
+                    withAnimation(.linear(duration: 0.1)) {
+                        self.progress += 0.1 / self.viewModel.settings.autoPlayInterval
                     }
                 } else {
-                    // 다음 구절로 넘어가기
-                    withAnimation(.easeOut(duration: 0.3)) {
-                        offset = -200
-                        opacity = 0
-                    }
-                    
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        viewModel.showNextQuote()
-                        scale = 0.5
-                        opacity = 0
-                        offset = 0
-                        progress = 0  // 프로그레스 리셋
-                        
-                        withAnimation(.spring(response: 1.0, dampingFraction: 0.9, blendDuration: 0.5)) {
-                            scale = 1.0
-                            opacity = 1
-                        }
-                    }
+                    currentTimer.invalidate()
+                    self.timer = nil
+                    self.handleQuoteTransition()
                 }
             }
         } else {
-            // 타이머 정지
             timer?.invalidate()
             timer = nil
             withAnimation {
                 progress = 0
+            }
+        }
+    }
+
+    private func startNewTimer() {
+        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { currentTimer in
+            if self.progress < 1.0 {
+                withAnimation(.linear(duration: 0.1)) {
+                    self.progress += 0.1 / self.viewModel.settings.autoPlayInterval
+                }
+            } else {
+                currentTimer.invalidate()
+                self.timer = nil
+                self.handleQuoteTransition()
+            }
+        }
+    }
+
+    private func handleQuoteTransition() {
+        // Increase animation duration from 0.3 to 0.8 for slower exit animation
+        withAnimation(.easeOut(duration: 0.8)) {
+            offset = -200
+            opacity = 0
+            scale = 0.8
+        }
+        
+        // Increase delay time to match the slower exit animation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            self.viewModel.showNextQuote()
+            
+            // Reset position for entrance animation
+            self.offset = 0
+            self.scale = 0.8
+            self.opacity = 0
+            
+            // Adjust entrance animation timing for smooth transition
+            withAnimation(.spring(
+                response: 0.6,      // Slightly increased response time
+                dampingFraction: 0.8,
+                blendDuration: 0.6  // Added blend duration for smoother animation
+            )) {
+                self.scale = 1.0
+                self.opacity = 1
+            }
+            
+            self.progress = 0
+            if self.isPlaying {
+                self.startNewTimer()
             }
         }
     }

@@ -89,19 +89,19 @@ struct QuoteSettingsPopup: View {
             }
             
         case .autoPlay:
-           VStack(alignment: .leading, spacing: 10) {
-               HStack {
-                   Text("\(Int(viewModel.settings.autoPlayInterval))s")
-                       .foregroundColor(.white)
-                   Spacer()
-               }
-               Slider(
-                   value: $viewModel.settings.autoPlayInterval,
-                   in: 1...60,
-                   step: 1
-               )
-               .accentColor(.white)
-           }
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("\(Int(viewModel.settings.autoPlayInterval))s")
+                        .foregroundColor(.white)
+                    Spacer()
+                }
+                Slider(
+                    value: $viewModel.settings.autoPlayInterval,
+                    in: 1...30,  // Changed range to 1-30 seconds
+                    step: 1
+                )
+                .accentColor(.white)
+            }
             
         case .haptic:
             Toggle("Enable Haptic", isOn: $viewModel.settings.hapticEnabled)

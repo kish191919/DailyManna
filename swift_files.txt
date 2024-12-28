@@ -4,91 +4,197 @@ import SwiftUI
 import UserNotifications
 
 class QuoteReminderViewModel: ObservableObject {
-    @Published var selectedCategory: SubCategory?
-    @Published var selectedDays: Set<Int> = []
-    @Published var selectedTime: Date = Date()
-    @Published var selectedSound: NotificationSound = .systemDefault
-    @Published var currentQuote: Quote?
-    @Published var isReminderSet: Bool = false
-    @Published var isFavorite: Bool = false
+   @Published var selectedCategory: SubCategory?
+   @Published var selectedDays: Set<Int> = []
+   @Published var selectedTime: Date = Date()
+   @Published var selectedSound: NotificationSound = .systemDefault
+   @Published var currentQuote: Quote?
+   @Published var isReminderSet: Bool = false
+   @Published var isFavorite: Bool = false
+   @Published var quotes: [Quote] = []
+    private let lastQuoteIndexKey = "lastQuoteIndex"
+   
+   private var autoPlayTimer: Timer?
+   
+    @Published var settings: QuoteSettings {
+        didSet {
+            saveSettings()
+        }
+    }
     
-    private var quotes: [Quote] = []
-    private var autoPlayTimer: Timer?
+    private let settingsKey = "quoteSettings"
     
     init() {
-        loadQuotes()
-        requestNotificationPermission()
+        // Load saved settings or use defaults
+        if let data = UserDefaults.standard.data(forKey: settingsKey),
+           let loadedSettings = try? JSONDecoder().decode(QuoteSettings.self, from: data) {
+            self.settings = loadedSettings
+        } else {
+            self.settings = QuoteSettings()
+        }
     }
     
-    private func loadQuotes() {
-        // 실제 앱에서는 데이터베이스나 API에서 로드
-        quotes = [
-            Quote(id: UUID(),
-                 text: "The fear of the Lord is the beginning of knowledge, but fools despise wisdom and instruction.",
-                 reference: "Proverbs 1:7",
-                 subCategory: CategoryData.faithAndChristianLiving.first(where: { $0.name == "Wisdom" }))
-        ]
-        currentQuote = quotes.first
+    func saveSettings() {
+        if let encoded = try? JSONEncoder().encode(settings) {
+            UserDefaults.standard.set(encoded, forKey: settingsKey)
+        }
     }
     
-    func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { success, error in
-            if let error = error {
-                print("Error: \(error.localizedDescription)")
+    // UserDefaults에 저장할 키
+    private let isFirstLaunchKey = "isFirstLaunch"
+    private let categoryKey = "selectedCategory"
+    private let lastQuoteKey = "lastQuote"
+    
+    // 사용자 선택 저장
+    var isFirstLaunch: Bool {
+        get {
+            !UserDefaults.standard.bool(forKey: isFirstLaunchKey)
+        }
+        set {
+            UserDefaults.standard.set(!newValue, forKey: isFirstLaunchKey)
+        }
+    }
+    
+    func saveUserPreferences() {
+        if let category = selectedCategory {
+            let encoder = JSONEncoder()
+            if let encoded = try? encoder.encode(category) {
+                UserDefaults.standard.set(encoded, forKey: categoryKey)
+            }
+        }
+        
+        // 현재 말씀의 인덱스 저장
+        if let currentQuote = currentQuote,
+           let currentIndex = quotes.firstIndex(where: { $0.id == currentQuote.id }) {
+            UserDefaults.standard.set(currentIndex, forKey: lastQuoteIndexKey)
+        }
+        
+        isFirstLaunch = false
+    }
+    
+    func loadSavedCategory() async -> Bool {
+        // Load saved category
+        if let savedCategory = UserDefaults.standard.data(forKey: categoryKey) {
+            let decoder = JSONDecoder()
+            if let loadedCategory = try? decoder.decode(SubCategory.self, from: savedCategory) {
+                await MainActor.run {
+                    self.selectedCategory = loadedCategory
+                }
+                
+                // Load quotes for the saved category
+                await loadQuotesForCategory(loadedCategory)
+                return true
+            }
+        }
+        return false
+    }
+    
+    func loadQuotesForCategory(_ category: SubCategory) async {
+        do {
+            let newQuotes = try await APIClient.fetchVerses(forCategory: category)
+            await MainActor.run {
+                self.quotes = newQuotes
+                
+                // Restore last viewed quote index
+                if let savedIndex = UserDefaults.standard.object(forKey: lastQuoteIndexKey) as? Int,
+                   savedIndex < newQuotes.count {
+                    self.currentQuote = newQuotes[savedIndex]
+                } else {
+                    self.currentQuote = newQuotes.first
+                }
+            }
+        } catch {
+            print("Error loading quotes: \(error)")
+        }
+    }
+    // 저장된 선택 불러오기
+    private func loadUserPreferences() {
+        // 카테고리 불러오기
+        if let savedCategory = UserDefaults.standard.data(forKey: categoryKey) {
+            let decoder = JSONDecoder()
+            if let loadedCategory = try? decoder.decode(SubCategory.self, from: savedCategory) {
+                selectedCategory = loadedCategory
+                
+                // 해당 카테고리의 말씀들 불러오기
+                Task {
+                    await loadQuotesForCategory(loadedCategory)
+                }
+            }
+        }
+        
+        // 마지막 말씀 불러오기
+        if let savedQuote = UserDefaults.standard.data(forKey: lastQuoteKey) {
+            let decoder = JSONDecoder()
+            if let loadedQuote = try? decoder.decode(Quote.self, from: savedQuote) {
+                currentQuote = loadedQuote
             }
         }
     }
-    
-    func scheduleReminders() {
-        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
-        
-        for day in selectedDays {
-            let notification = UNMutableNotificationContent()
-            notification.title = "Daily Bible Quote"
-            
-            // 선택된 카테고리에 맞는 구절 선택
-            if let category = selectedCategory {
-                notification.body = quotes.filter { $0.subCategory?.name == category.name }
-                    .randomElement()?.text ?? quotes.randomElement()?.text ?? ""
-            } else {
-                notification.body = quotes.randomElement()?.text ?? ""
-            }
-            
-            notification.sound = UNNotificationSound(named: selectedSound.soundName)
-            
-            var dateComponents = Calendar.current.dateComponents([.hour, .minute], from: selectedTime)
-            dateComponents.weekday = day + 1
-            
-            let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
-            let request = UNNotificationRequest(identifier: UUID().uuidString, content: notification, trigger: trigger)
-            
-            UNUserNotificationCenter.current().add(request)
-        }
-        
-        isReminderSet = true
-    }
-    
-    func toggleFavorite() {
-        isFavorite.toggle()
-    }
-    
-    func startAutoPlay() {
-        autoPlayTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            self?.showNextQuote()
-        }
-    }
-    
-    func stopAutoPlay() {
-        autoPlayTimer?.invalidate()
-        autoPlayTimer = nil
-    }
-    
-    private func showNextQuote() {
+   
+   func requestNotificationPermission() {
+       UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { success, error in
+           if let error = error {
+               print("Error: \(error.localizedDescription)")
+           }
+       }
+   }
+   
+   func scheduleReminders() {
+       UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+       
+       for day in selectedDays {
+           let notification = UNMutableNotificationContent()
+           notification.title = "Daily Bible Quote"
+           
+           if let quote = quotes.randomElement() {
+               notification.body = quote.text
+           }
+           
+           notification.sound = UNNotificationSound(named: selectedSound.soundName)
+           
+           var dateComponents = Calendar.current.dateComponents([.hour, .minute], from: selectedTime)
+           dateComponents.weekday = day + 1
+           
+           let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
+           let request = UNNotificationRequest(identifier: UUID().uuidString, content: notification, trigger: trigger)
+           
+           UNUserNotificationCenter.current().add(request)
+       }
+       
+       isReminderSet = true
+   }
+   
+   func toggleFavorite() {
+       isFavorite.toggle()
+   }
+   
+   func startAutoPlay() {
+       autoPlayTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+           self?.showNextQuote()
+       }
+   }
+   
+   func stopAutoPlay() {
+       autoPlayTimer?.invalidate()
+       autoPlayTimer = nil
+   }
+   
+    func showNextQuote() {
         guard let currentQuote = currentQuote,
               let currentIndex = quotes.firstIndex(where: { $0.id == currentQuote.id }) else { return }
         
         let nextIndex = (currentIndex + 1) % quotes.count
         self.currentQuote = quotes[nextIndex]
+        saveUserPreferences()  // 인덱스 저장
+    }
+
+    func showPreviousQuote() {
+        guard let currentQuote = currentQuote,
+              let currentIndex = quotes.firstIndex(where: { $0.id == currentQuote.id }) else { return }
+        
+        let previousIndex = (currentIndex - 1 + quotes.count) % quotes.count
+        self.currentQuote = quotes[previousIndex]
+        saveUserPreferences()  // 인덱스 저장
     }
 }
 
@@ -108,21 +214,38 @@ struct DailyManna: App {
 }
 
 
+// ./DailyManna/Models/APIClient.swift
+
+import Foundation
+
+struct APIClient {
+    static let baseURL = "https://aistockadvisor.net"
+    
+    static func fetchVerses(forCategory category: SubCategory) async throws -> [Quote] {
+        let url = URL(string: "\(baseURL)/api/categories/\(category.name.lowercased())/verses")!
+        let (data, _) = try await URLSession.shared.data(from: url)
+        let response = try JSONDecoder().decode(VersesResponse.self, from: data)
+        return response.verses
+    }
+ }
+
+ struct VersesResponse: Codable {
+    let verses: [Quote]
+ }
+
+
 // ./DailyManna/Models/Quote.swift
 
 import SwiftUI
 
 struct Quote: Identifiable, Codable {
-    let id: UUID
+    let id: String  // UUID에서 String으로 변경
     let text: String
     let reference: String
-    let subCategory: SubCategory?
+    let category: String
     
     enum CodingKeys: String, CodingKey {
-        case id
-        case text
-        case reference
-        case subCategory
+        case id, text, reference, category
     }
 }
 
@@ -207,6 +330,122 @@ struct DaySelectionView: View {
 }
 
 
+// ./DailyManna/Views/QuoteSettingsSheet.swift
+
+
+import SwiftUI
+
+struct QuoteSettingsSheet: View {
+    @Environment(\.dismiss) var dismiss
+    @ObservedObject var viewModel: QuoteReminderViewModel
+    @State private var isPremiumLocked = false
+    
+    var body: some View {
+        NavigationView {
+            List {
+                // 텍스트 크기 조절
+                Section(header: Text("Text Size")) {
+                    VStack(alignment: .leading) {
+                        Text("Bible Verse")
+                        Slider(
+                            value: $viewModel.settings.textSize,
+                            in: 20...40,
+                            step: 1
+                        ) {
+                            Text("Text Size")
+                        } minimumValueLabel: {
+                            Text("A").font(.system(size: 14))
+                        } maximumValueLabel: {
+                            Text("A").font(.system(size: 20))
+                        }
+                        
+                        Text("Reference")
+                        Slider(
+                            value: $viewModel.settings.referenceSize,
+                            in: 16...32,
+                            step: 1
+                        ) {
+                            Text("Reference Size")
+                        } minimumValueLabel: {
+                            Text("A").font(.system(size: 12))
+                        } maximumValueLabel: {
+                            Text("A").font(.system(size: 18))
+                        }
+                    }
+                }
+                
+                // 자동 재생 설정
+                Section(header: Text("Auto Play")) {
+                    Picker("Interval", selection: $viewModel.settings.autoPlayInterval) {
+                        Text("8 seconds").tag(8.0)
+                        Text("12 seconds").tag(12.0)
+                        Text("16 seconds").tag(16.0)
+                    }
+                }
+                
+                // 햅틱 피드백
+                Section {
+                    Toggle("Haptic Feedback", isOn: $viewModel.settings.hapticEnabled)
+                }
+                
+                // 테마 선택
+                Section(header: Text("Theme")) {
+                    ForEach(QuoteTheme.allCases, id: \.self) { theme in
+                        HStack {
+                            Circle()
+                                .fill(theme.color)
+                                .frame(width: 20, height: 20)
+                            
+                            Text(theme.rawValue)
+                            
+                            if theme != .classic && theme != .midnight {
+                                Spacer()
+                                Image(systemName: "crown.fill")
+                                    .foregroundColor(.yellow)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            if theme == .classic || theme == .midnight {
+                                viewModel.settings.theme = theme
+                            } else {
+                                isPremiumLocked = true
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Settings")
+            .navigationBarItems(trailing: Button("Done") {
+                viewModel.saveSettings()
+                dismiss()
+            })
+            .alert("Premium Feature", isPresented: $isPremiumLocked) {
+                Button("Get Premium") {
+                    // Premium 구매 로직
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Unlock all themes with Premium!")
+            }
+        }
+    }
+}
+
+// QuoteTheme extension for colors
+extension QuoteTheme {
+    var color: Color {
+        switch self {
+        case .classic: return .black
+        case .midnight: return Color(red: 0.1, green: 0.1, blue: 0.2)
+        case .ocean: return Color(red: 0, green: 0.3, blue: 0.6)
+        case .forest: return Color(red: 0.1, green: 0.3, blue: 0.1)
+        case .sunset: return Color(red: 0.6, green: 0.2, blue: 0.3)
+        }
+    }
+}
+
+
 // ./DailyManna/Views/TimePickerView.swift
 
 import SwiftUI
@@ -265,89 +504,195 @@ struct TimePickerView: View {
 import  SwiftUI
 
 struct QuoteView: View {
-    @ObservedObject var viewModel: QuoteReminderViewModel
-    @State private var showCategorySheet = false
-    @State private var isPlaying = false
-    @State private var showUpgradeAlert = false
-    @Environment(\.colorScheme) var colorScheme
-    
-    var backgroundColor: Color {
-        colorScheme == .dark ? Color(.systemBackground) : Color(.systemBackground)
-    }
-    
+   @ObservedObject var viewModel: QuoteReminderViewModel
+   @State private var showCategorySheet = false
+   @State private var isPlaying = false
+   @State private var showUpgradeAlert = false
+   @State private var offset: CGFloat = 0
+   @State private var opacity: Double = 1.0
+   @State private var scale: CGFloat = 1.0  // 추가
+   @Environment(\.colorScheme) var colorScheme
+   @State private var progress: Double = 0
+   @State private var timer: Timer?
+   private let autoPlayDuration: Double = 12.0
+  @State private var showSettings = false
+    @State private var showThemeSheet = false
+    @State private var settingsPosition: CGPoint = .zero
+   
     var categoryButton: some View {
         Button(action: {
             showCategorySheet = true
         }) {
             if let category = viewModel.selectedCategory {
-                HStack(spacing: 4) {
+                HStack(spacing: 8) {
                     Text(category.icon)
+                        .font(.system(size: 20))
                     Text(category.name)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.system(size: 18, weight: .medium))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
                 .background(
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(Color.orange.opacity(0.15))
+                    Capsule()
+                        .fill(Color(.systemGray5))
                 )
             }
         }
+        .foregroundColor(.white)
     }
-    
+   
     var body: some View {
-        VStack(spacing: 0) {
-            // Top Bar
-            HStack {
-                categoryButton
-                Spacer()
-                Button(action: {
-                    showUpgradeAlert = true
-                }) {
-                    Image(systemName: "crown.fill")
-                        .font(.system(size: 22))
-                        .foregroundColor(.orange)
+        ZStack {
+            VStack(spacing: 0) {
+                // Top Navigation Bar
+                HStack {
+                    categoryButton
+                    Spacer()
+                    Button(action: {
+                        showUpgradeAlert = true
+                    }) {
+                        Image(systemName: "crown.fill")
+                            .font(.system(size: 24))
+                            .foregroundColor(.yellow)
+                            .opacity(0.8)
+                    }
                 }
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+                
+                // Quote Content
+                GeometryReader { geometry in
+                    VStack(spacing: 0) {
+                        Spacer()
+                        Text(viewModel.currentQuote?.text ?? "")
+                            .font(.system(size: viewModel.settings.textSize, weight: .regular))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+                            .minimumScaleFactor(0.5)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .foregroundColor(.white)
+                        
+                        Text(viewModel.currentQuote?.reference ?? "")
+                            .font(.system(size: viewModel.settings.referenceSize, weight: .regular))
+                            .foregroundColor(.gray)
+                            .padding(.top, 24)
+                        Spacer()
+                    }
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .offset(y: offset)
+                    .scaleEffect(scale)
+                    .opacity(opacity)
+                    // 말씀 내용을 더 위로 이동
+                    .offset(y: showSettings ? -200 : 0)  // -120에서 -200으로 수정
+                    .animation(.spring(), value: showSettings)
+                }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture()
+                        .onChanged { gesture in
+                            let translation = gesture.translation.height
+                            if translation < 0 {
+                                offset = translation
+                                scale = 1.0
+                                opacity = 1.0 - (abs(translation) / 500.0)
+                            }
+                        }
+                        .onEnded { gesture in
+                            let translation = gesture.translation.height
+                            let generator = UIImpactFeedbackGenerator(style: .medium)
+                            
+                            if translation < -50 {
+                                if viewModel.settings.hapticEnabled {
+                                    generator.impactOccurred()
+                                }
+                                withAnimation(.easeOut(duration: 0.3)) {
+                                    offset = -200
+                                    opacity = 0
+                                }
+                                
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    viewModel.showNextQuote()
+                                    scale = 0.5
+                                    opacity = 0
+                                    offset = 0
+                                    
+                                    withAnimation(.spring(response: 1.0, dampingFraction: 0.9, blendDuration: 0.5)) {
+                                        scale = 1.0
+                                        opacity = 1
+                                    }
+                                }
+                            } else {
+                                withAnimation(.spring()) {
+                                    offset = 0
+                                    scale = 1.0
+                                    opacity = 1
+                                }
+                            }
+                        }
+                )
+                
+                // Bottom Control Bar
+                HStack(spacing: 60) {
+                    Button(action: toggleFavorite) {
+                        Image(systemName: viewModel.isFavorite ? "heart.fill" : "heart")
+                            .font(.system(size: 24))
+                            .foregroundColor(.white)
+                    }
+                    
+                    Button(action: shareQuote) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 24))
+                            .foregroundColor(.white)
+                    }
+                    
+                    Button(action: toggleAutoPlay) {
+                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 24))
+                            .foregroundColor(.white)
+                    }
+                    
+                    Button(action: {
+                        withAnimation {
+                            showSettings.toggle()
+                        }
+                    }) {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 24))
+                            .foregroundColor(.white)
+                    }
+                }
+                .padding(.bottom, 40)
+                .padding(.top, 20)
             }
-            .padding()
             
-            // Quote Content
-            VStack(spacing: 20) {
-                Text(viewModel.currentQuote?.text ?? "")
-                    .font(.system(size: 24))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
+            // Settings Popup
+            if showSettings {
+                Color.black.opacity(0.3)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        withAnimation {
+                            showSettings = false
+                        }
+                    }
                 
-                Text(viewModel.currentQuote?.reference ?? "")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(.gray)
+                VStack {
+                    Spacer()
+                    QuoteSettingsPopup(viewModel: viewModel, showThemeSheet: $showThemeSheet)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal)
+                        .padding(.bottom, 40)
+                }
+                .transition(.move(edge: .bottom))
+                .zIndex(1)
             }
-            .frame(maxHeight: .infinity)
-            
-            // Bottom Controls
-            HStack(spacing: 40) {
-                Button(action: shareQuote) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 24))
-                }
-                
-                Button(action: toggleFavorite) {
-                    Image(systemName: viewModel.isFavorite ? "heart.fill" : "heart")
-                        .font(.system(size: 24))
-                        .foregroundColor(.red)
-                }
-                
-                Button(action: toggleAutoPlay) {
-                    Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 24))
-                        .foregroundColor(.orange)
-                }
-            }
-            .padding(.bottom, 30)
         }
-        .background(backgroundColor.ignoresSafeArea())
+        .background(viewModel.settings.theme.color.ignoresSafeArea())
+        .preferredColorScheme(.dark)
         .sheet(isPresented: $showCategorySheet) {
-            CategorySheetView(selectedCategory: $viewModel.selectedCategory)
+            CategorySheetView(selectedCategory: $viewModel.selectedCategory, viewModel: viewModel)
+        }
+        .sheet(isPresented: $showThemeSheet) {
+            ThemeSelectionSheet(viewModel: viewModel)
         }
         .alert(isPresented: $showUpgradeAlert) {
             Alert(
@@ -357,32 +702,93 @@ struct QuoteView: View {
                 secondaryButton: .cancel()
             )
         }
-    }
-    
-    private func shareQuote() {
-        guard let quote = viewModel.currentQuote else { return }
-        let shareText = "\(quote.text)\n- \(quote.reference)"
-        let av = UIActivityViewController(activityItems: [shareText], applicationActivities: nil)
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let window = windowScene.windows.first {
-            window.rootViewController?.present(av, animated: true)
+        .onTapGesture {
+            if showSettings {
+                withAnimation {
+                    showSettings = false
+                }
+            }
         }
     }
     
-    private func toggleFavorite() {
-        viewModel.toggleFavorite()
+    // CircularProgressButton 구현
+    private var playButton: some View {
+        ZStack {
+            // 프로그레스 배경
+            Circle()
+                .stroke(lineWidth: 2)
+                .opacity(0.3)
+                .foregroundColor(.white)
+            
+            // 프로그레스 인디케이터
+            Circle()
+                .trim(from: 0, to: progress)
+                .stroke(style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                .foregroundColor(.white)
+                .rotationEffect(Angle(degrees: -90))
+            
+            // 재생/일시정지 아이콘
+            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                .font(.system(size: 24))
+                .foregroundColor(.white)
+        }
+        .frame(width: 32, height: 32)
     }
     
     private func toggleAutoPlay() {
         isPlaying.toggle()
         if isPlaying {
-            // Start auto-play timer
-            viewModel.startAutoPlay()
+            // 타이머 시작
+            progress = 0
+            timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+                if progress < 1.0 {
+                    withAnimation {
+                        progress += 0.1 / autoPlayDuration
+                    }
+                } else {
+                    // 다음 구절로 넘어가기
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        offset = -200
+                        opacity = 0
+                    }
+                    
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        viewModel.showNextQuote()
+                        scale = 0.5
+                        opacity = 0
+                        offset = 0
+                        progress = 0  // 프로그레스 리셋
+                        
+                        withAnimation(.spring(response: 1.0, dampingFraction: 0.9, blendDuration: 0.5)) {
+                            scale = 1.0
+                            opacity = 1
+                        }
+                    }
+                }
+            }
         } else {
-            // Stop auto-play timer
-            viewModel.stopAutoPlay()
+            // 타이머 정지
+            timer?.invalidate()
+            timer = nil
+            withAnimation {
+                progress = 0
+            }
         }
     }
+   
+   private func shareQuote() {
+       guard let quote = viewModel.currentQuote else { return }
+       let shareText = "\(quote.text)\n- \(quote.reference)"
+       let av = UIActivityViewController(activityItems: [shareText], applicationActivities: nil)
+       if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+          let window = windowScene.windows.first {
+           window.rootViewController?.present(av, animated: true)
+       }
+   }
+   
+   private func toggleFavorite() {
+       viewModel.toggleFavorite()
+   }
 }
 
 
@@ -401,7 +807,7 @@ struct ReminderSetupView: View {
     @Environment(\.colorScheme) var colorScheme
     
     var backgroundColor: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color.white
+        Color(.systemGray6)  // 항상 다크모드 색상 사용
     }
     
     var buttonBackgroundColor: Color {
@@ -419,6 +825,11 @@ struct ReminderSetupView: View {
             return "\(category.icon) \(category.name)"
         }
         return "Select"
+    }
+    
+    // Save 버튼이 활성화될 조건
+    private var isSaveEnabled: Bool {
+        viewModel.selectedCategory != nil
     }
     
     var body: some View {
@@ -541,7 +952,9 @@ struct ReminderSetupView: View {
                 // 저장 버튼
                 Button(action: {
                     viewModel.scheduleReminders()
-                    showQuoteView = true  // QuoteView로 전환
+                    // 선택된 카테고리와 현재 말씀 저장
+                    viewModel.saveUserPreferences()
+                    showQuoteView = true
                 }) {
                     Text("Save")
                         .font(.headline)
@@ -550,16 +963,18 @@ struct ReminderSetupView: View {
                         .padding(.vertical, 16)
                         .background(
                             RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.orange)
+                                .fill(isSaveEnabled ? Color.orange : Color.gray)
                         )
                 }
+                .disabled(!isSaveEnabled)
                 .padding(.horizontal)
                 .padding(.bottom, 20)
             }
         }
-        .background(backgroundColor.ignoresSafeArea())
+        .background(Color(.systemGray6).ignoresSafeArea())
+        .preferredColorScheme(.dark) // 강제로 다크모드 적용
         .sheet(isPresented: $showCategorySheet) {
-            CategorySheetView(selectedCategory: $viewModel.selectedCategory)
+            CategorySheetView(selectedCategory: $viewModel.selectedCategory, viewModel: viewModel)
         }
         .popover(isPresented: $showTimePicker, attachmentAnchor: .point(.bottom), arrowEdge: .bottom) {
             TimePickerView(selectedTime: $viewModel.selectedTime)
@@ -692,7 +1107,7 @@ struct SplashView: View {
             ContentView()
         } else {
             ZStack {
-                Color.white.edgesIgnoringSafeArea(.all)
+                Color(.systemGray6).edgesIgnoringSafeArea(.all)  // 다크모드 배경색
                 
                 VStack {
                     VStack(spacing: 20) {
@@ -701,15 +1116,13 @@ struct SplashView: View {
                             .font(.system(size: 80))
                             .foregroundColor(.orange)
                         
-                        // 앱 이름
                         Text("DailyManna")
                             .font(.system(size: 36, weight: .bold))
-                            .foregroundColor(.black.opacity(0.80))
+                            .foregroundColor(.white)  // 텍스트 색상 변경
                         
-                        // 앱 설명
                         Text("Daily bread for your soul")
                             .font(.title3)
-                            .foregroundColor(.black.opacity(0.60))
+                            .foregroundColor(.gray)  // 설명 텍스트 색상 변경
                     }
                     .scaleEffect(size)
                     .opacity(opacity)
@@ -725,15 +1138,16 @@ struct SplashView: View {
                         Text("\"Give us this day our daily bread\"")
                             .font(.system(size: 16, weight: .medium))
                             .italic()
-                            .foregroundColor(.black.opacity(0.6))
+                            .foregroundColor(.gray)  // 인용구 색상 변경
                         Text("Matthew 6:11")
                             .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.black.opacity(0.5))
+                            .foregroundColor(.gray)  // 참조 색상 변경
                     }
                     .padding(.top, 50)
                     .opacity(opacity)
                 }
             }
+            .preferredColorScheme(.dark)  // 강제 다크모드 설정
             .onAppear {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                     withAnimation {
@@ -746,20 +1160,140 @@ struct SplashView: View {
 }
 
 
-// ./DailyManna/Views/CategorySheetView.swift
+// ./DailyManna/Views/QuoteSettingsPopup.swift
 
 import SwiftUI
+
+struct QuoteSettingsPopup: View {
+    @ObservedObject var viewModel: QuoteReminderViewModel
+    @Binding var showThemeSheet: Bool
+    @State private var expandedSection: SettingSection?
+    
+    enum SettingSection {
+        case textSize, autoPlay, haptic
+    }
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            ForEach([
+                ("Text Size", SettingSection.textSize),
+                ("Auto Play", SettingSection.autoPlay),
+                ("Haptic", SettingSection.haptic),
+                ("Theme", nil)
+            ], id: \.0) { title, section in
+                if let section = section {
+                    // 확장 가능한 섹션
+                    VStack(spacing: 0) {
+                        Button(action: {
+                            withAnimation {
+                                expandedSection = expandedSection == section ? nil : section
+                            }
+                        }) {
+                            HStack {
+                                Text(title)
+                                    .foregroundColor(.white)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .foregroundColor(.gray)
+                                    .rotationEffect(.degrees(expandedSection == section ? 90 : 0))
+                            }
+                            .padding()
+                            .background(Color(.systemGray6))
+                            .cornerRadius(12)
+                        }
+                        
+                        if expandedSection == section {
+                            sectionContent(for: section)
+                                .padding(.horizontal)
+                                .padding(.vertical, 8)
+                                .background(Color(.systemGray5))
+                                .cornerRadius(12)
+                                .transition(.scale)
+                        }
+                    }
+                } else {
+                    // Theme 버튼
+                    Button(action: {
+                        showThemeSheet = true
+                    }) {
+                        HStack {
+                            Text(title)
+                                .foregroundColor(.white)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.gray)
+                        }
+                        .padding()
+                        .background(Color(.systemGray6))
+                        .cornerRadius(12)
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color(.systemGray5))
+        .cornerRadius(20)
+        .shadow(radius: 10)
+    }
+    
+    @ViewBuilder
+    private func sectionContent(for section: SettingSection) -> some View {
+        switch section {
+        case .textSize:
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Bible Verse")
+                    .foregroundColor(.white)
+                Slider(value: $viewModel.settings.textSize, in: 20...40, step: 1)
+                    .accentColor(.white)
+                
+                Text("Reference")
+                    .foregroundColor(.white)
+                Slider(value: $viewModel.settings.referenceSize, in: 16...32, step: 1)
+                    .accentColor(.white)
+            }
+            
+        case .autoPlay:
+           VStack(alignment: .leading, spacing: 10) {
+               HStack {
+                   Text("\(Int(viewModel.settings.autoPlayInterval))s")
+                       .foregroundColor(.white)
+                   Spacer()
+               }
+               Slider(
+                   value: $viewModel.settings.autoPlayInterval,
+                   in: 1...60,
+                   step: 1
+               )
+               .accentColor(.white)
+           }
+            
+        case .haptic:
+            Toggle("Enable Haptic", isOn: $viewModel.settings.hapticEnabled)
+                .foregroundColor(.white)
+        }
+    }
+}
+
+
+// ./DailyManna/Views/CategorySheetView.swift
+
 
 import SwiftUI
 
 struct CategorySheetView: View {
     @Binding var selectedCategory: SubCategory?
+    @ObservedObject var viewModel: QuoteReminderViewModel  // 추가
     @Environment(\.dismiss) var dismiss
     @Environment(\.colorScheme) var colorScheme
     @State private var selectedMainCategory: MainCategory = .faithAndChristianLiving
     
+    init(selectedCategory: Binding<SubCategory?>, viewModel: QuoteReminderViewModel) {  // 수정
+        _selectedCategory = selectedCategory
+        self.viewModel = viewModel
+    }
+    
     var backgroundColor: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color.white
+        Color(.systemGray6)  // 항상 다크모드 색상 사용
     }
     
     // 현재 카테고리의 인덱스
@@ -822,12 +1356,14 @@ struct CategorySheetView: View {
                         ForEach(CategoryData.getSubCategories(for: selectedMainCategory), id: \.id) { subCategory in
                             Button(action: {
                                 selectedCategory = subCategory
+                                Task {
+                                    await viewModel.loadQuotesForCategory(subCategory)
+                                }
                                 dismiss()
                             }) {
                                 VStack(spacing: 8) {
                                     Text(subCategory.icon)
                                         .font(.system(size: 32))
-                                    
                                     Text(subCategory.name)
                                         .font(.system(size: 16, weight: .medium))
                                         .multilineTextAlignment(.center)
@@ -917,21 +1453,30 @@ struct MainCategoryButton: View {
 
 // ./DailyManna/Views/ContentView.swift
 
-//
-//  ContentView.swift
-//  DailyManna
-//
-//  Created by sunghwan ki on 12/26/24.
+
 //
 
 import SwiftUI
 
+// ContentView.swift
 struct ContentView: View {
     @StateObject private var viewModel = QuoteReminderViewModel()
+    @State private var hasExistingSettings: Bool = false
     
     var body: some View {
         NavigationView {
-            ReminderSetupView(viewModel: viewModel)
+            if hasExistingSettings {
+                QuoteView(viewModel: viewModel)
+            } else {
+                ReminderSetupView(viewModel: viewModel)
+            }
+        }
+        .onAppear {
+            // Check for saved category and load it
+            Task {
+                let hasSettings = await viewModel.loadSavedCategory()
+                hasExistingSettings = hasSettings
+            }
         }
     }
 }
@@ -1205,6 +1750,101 @@ struct CategoryButton: View {
         }
         .foregroundColor(isSelected ? .orange : .primary)
     }
+}
+
+
+// ./DailyManna/Views/Components/ThemeSelectionSheet.swift
+
+import SwiftUI
+
+struct ThemeSelectionSheet: View {
+    @Environment(\.dismiss) var dismiss
+    @ObservedObject var viewModel: QuoteReminderViewModel
+    @State private var isPremiumLocked = false
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                Text("Themes")
+                    .font(.largeTitle)
+                    .bold()
+                
+                // Theme Preview
+                ZStack {
+                    viewModel.settings.theme.color
+                        .frame(width: 300, height: 400)
+                        .cornerRadius(20)
+                    
+                    Text("Sample Text")
+                        .foregroundColor(.white)
+                        .font(.system(size: 24))
+                }
+                
+                // Theme Options
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 20) {
+                        ForEach(QuoteTheme.allCases, id: \.self) { theme in
+                            VStack {
+                                theme.color
+                                    .frame(width: 100, height: 150)
+                                    .cornerRadius(10)
+                                    .overlay(
+                                        theme == viewModel.settings.theme ?
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .stroke(Color.white, lineWidth: 2) : nil
+                                    )
+                                
+                                if theme != .classic && theme != .midnight {
+                                    Image(systemName: "crown.fill")
+                                        .foregroundColor(.yellow)
+                                }
+                            }
+                            .onTapGesture {
+                                if theme == .classic || theme == .midnight {
+                                    viewModel.settings.theme = theme
+                                } else {
+                                    isPremiumLocked = true
+                                }
+                            }
+                        }
+                    }
+                    .padding()
+                }
+            }
+            .navigationBarItems(trailing: Button("Done") { dismiss() })
+        }
+        .alert("Premium Feature", isPresented: $isPremiumLocked) {
+            Button("Get Premium") {
+                // Premium 구매 로직
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Unlock all themes with Premium!")
+        }
+    }
+}
+
+
+// ./DailyManna/Views/Components/QuoteSettings.swift
+
+import SwiftUI
+
+// QuoteSettings.swift
+struct QuoteSettings: Codable {
+    var textSize: Double = 28
+    var referenceSize: Double = 24
+    var autoPlayInterval: Double = 12.0
+    var hapticEnabled: Bool = true
+    var theme: QuoteTheme = .classic
+}
+
+enum QuoteTheme: String, Codable, CaseIterable {
+    case classic = "Classic"
+    case midnight = "Midnight"
+    // Premium themes
+    case ocean = "Ocean"
+    case forest = "Forest"
+    case sunset = "Sunset"
 }
 
 

@@ -6,22 +6,25 @@ import SwiftUI
 // ContentView.swift
 struct ContentView: View {
     @StateObject private var viewModel = QuoteReminderViewModel()
-    @State private var hasExistingSettings: Bool = false
+    @State private var hasExistingSettings: Bool?  // Changed to optional
     
     var body: some View {
-        NavigationView {
-            if hasExistingSettings {
-                QuoteView(viewModel: viewModel)
+        Group {
+            if let hasSettings = hasExistingSettings {  // Only show content when we know the settings state
+                if hasSettings {
+                    QuoteView(viewModel: viewModel)
+                } else {
+                    ReminderSetupView(viewModel: viewModel)
+                }
             } else {
-                ReminderSetupView(viewModel: viewModel)
+                // Show nothing while loading
+                Color.clear
             }
         }
-        .onAppear {
+        .task {
             // Check for saved category and load it
-            Task {
-                let hasSettings = await viewModel.loadSavedCategory()
-                hasExistingSettings = hasSettings
-            }
+            let hasSettings = await viewModel.loadSavedCategory()
+            hasExistingSettings = hasSettings
         }
     }
 }

@@ -31,6 +31,11 @@ struct ReminderSetupView: View {
         return "Select"
     }
     
+    // Save 버튼이 활성화될 조건
+    private var isSaveEnabled: Bool {
+        viewModel.selectedCategory != nil
+    }
+    
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
@@ -151,7 +156,9 @@ struct ReminderSetupView: View {
                 // 저장 버튼
                 Button(action: {
                     viewModel.scheduleReminders()
-                    showQuoteView = true  // QuoteView로 전환
+                    // 선택된 카테고리와 현재 말씀 저장
+                    viewModel.saveUserPreferences()
+                    showQuoteView = true
                 }) {
                     Text("Save")
                         .font(.headline)
@@ -160,9 +167,10 @@ struct ReminderSetupView: View {
                         .padding(.vertical, 16)
                         .background(
                             RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.orange)
+                                .fill(isSaveEnabled ? Color.orange : Color.gray)
                         )
                 }
+                .disabled(!isSaveEnabled)
                 .padding(.horizontal)
                 .padding(.bottom, 20)
             }
